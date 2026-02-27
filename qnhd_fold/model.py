@@ -9,10 +9,18 @@ from typing import Optional
 
 import numpy as np
 
+try:
+    import torch
+
+    TORCH_AVAILABLE = True
+except Exception:  # pragma: no cover
+    torch = None
+    TORCH_AVAILABLE = False
+
 from .confidence import ConfidenceHead, ConfidenceOutputs
 from .diffusion import DiffusionConfig, DualScoreDiffusion
 from .encoder import EncoderConfig, PairformerEncoder
-from .quantum_circuits import QuantumProteinCircuit
+from .quantum_circuits import QuantumEnergyModule
 
 
 @dataclass
@@ -33,11 +41,12 @@ class StructurePrediction:
 
 
 class QNHDFold:
-    def __init__(self, config: Optional[DiffusionConfig] = None):
+    def __init__(self, config: Optional[DiffusionConfig] = None, device: Optional[str] = None):
         self.config = config or DiffusionConfig()
+        self.device = device or ("cuda" if TORCH_AVAILABLE and torch.cuda.is_available() else "cpu")
         self.encoder = PairformerEncoder(EncoderConfig())
         self.diffusion = DualScoreDiffusion(self.config)
-        self.quantum = QuantumProteinCircuit(n_qubits=10)
+        self.quantum = QuantumEnergyModule(n_qubits=10)
         self.confidence = ConfidenceHead()
 
     def _log(self, message: str, verbose: bool) -> None:
@@ -57,6 +66,7 @@ class QNHDFold:
         num_diffusion_steps: int = 200,
         verbose: bool = False,
         batch_size: int = 256,
+        use_mixed_precision: bool = True,
     ) -> StructurePrediction:
         self._validate_sequence(sequence)
         n = len(sequence)
@@ -64,12 +74,12 @@ class QNHDFold:
 
         pair_repr = self.encoder.encode(sequence)
 
-        def neural_score_fn(xt: np.ndarray, t: int) -> np.ndarray:
+        def neural_score_fn(xt, t: int):
             pair_mean = pair_repr.mean(axis=-1)
             pair_grad = pair_mean[:, :, None] - pair_mean.mean()
             return -0.1 * xt + 0.01 * pair_grad
 
-        def quantum_score_fn(xt: np.ndarray, t: int) -> np.ndarray:
+        def quantum_score_fn(xt, t: int):
             return -self.quantum.quantum_energy_gradient(xt)
 
         self._log("Running reverse diffusion", verbose)
@@ -78,23 +88,22 @@ class QNHDFold:
             end = min(n, start + batch_size)
             shape = (end - start, end - start, 3)
             block = self.diffusion.sample(shape, neural_score_fn, quantum_score_fn, num_steps=num_diffusion_steps)
+            if TORCH_AVAILABLE and isinstance(block, torch.Tensor):
+                block = block.detach().cpu().numpy()
             coords[start:end] = block.mean(axis=1)
 
         self._log("Computing confidence outputs", verbose)
         conf = self.confidence.predict(coords, pair_repr)
         return StructurePrediction(sequence=sequence, coordinates=coords, confidence=conf)
 
+    def predict_batch(self, sequences: list[str], **kwargs) -> list[StructurePrediction]:
+        return [self.predict_structure(seq, **kwargs) for seq in sequences]
+
     def save_checkpoint(self, path: str) -> None:
-        np.savez(
-            path,
-            betas=self.diffusion.betas,
-            proj=self.encoder.proj,
-            n_qubits=self.quantum.n_qubits,
-        )
+        np.savez(path, betas=np.array(self.diffusion.betas), n_qubits=self.quantum.n_qubits)
 
     def load_checkpoint(self, path: str) -> None:
         data = np.load(path)
         self.diffusion.betas = data["betas"]
         self.diffusion.alphas = 1.0 - self.diffusion.betas
         self.diffusion.alpha_bars = np.cumprod(self.diffusion.alphas)
-        self.encoder.proj = data["proj"]
