@@ -305,3 +305,7 @@ GitHub: [@Tommaso-R-Marena](https://github.com/Tommaso-R-Marena)
 ---
 
 **Last Updated:** February 2026
+
+## Backend Runtime
+
+QNHD-Fold now includes a **torch-native backend** for encoder/diffusion/quantum modules when PyTorch is available, with a NumPy fallback for lightweight environments. This enables seamless migration to GPU and mixed-precision workflows without breaking CPU-only usage.
