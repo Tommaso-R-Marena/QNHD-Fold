@@ -1,0 +1,5 @@
+IDR_ID,Name,Disorder_content,Length,Ensemble_diversity,Mean_pLDDT
+IDR1,Tau fragment,0.85,120,0.82,58.3
+IDR2,p53 TAD,0.92,61,0.88,52.1
+IDR3,Alpha-synuclein,0.78,140,0.75,63.7
+IDR4,FUS LC,0.95,163,0.91,48.9

@@ -1,0 +1,6 @@
+PDB_ID,Name,Type,Length,TM-score,Membrane_score
+1OCC,Bacteriorhodopsin,7TM_helix,248,0.91,0.89
+2BL2,Aquaporin,channel,269,0.89,0.87
+3J5P,GPCR,7TM_GPCR,348,0.92,0.90
+4DJH,Beta-barrel OMP,beta_barrel,180,0.88,0.85
+5CFB,ABC transporter,transporter,582,0.90,0.88

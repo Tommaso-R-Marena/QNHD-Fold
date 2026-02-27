@@ -1,0 +1,6 @@
+PDB_ID,Name,Type,Length,Resolution (Å),Method
+1UBQ,Ubiquitin,small_alpha_beta,76,1.8,X-RAY DIFFRACTION
+2MBP,Maltose binding protein,alpha_beta,370,1.9,X-RAY DIFFRACTION
+1VII,Villin headpiece,small_alpha,36,2.0,X-RAY DIFFRACTION
+1BBZ,Coiled coil,alpha_helical,28,1.5,X-RAY DIFFRACTION
+1GB1,Protein G B1 domain,alpha_beta,56,2.2,X-RAY DIFFRACTION

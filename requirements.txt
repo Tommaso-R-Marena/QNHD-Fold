@@ -1,0 +1,16 @@
+# QNHD-Fold Requirements
+
+numpy>=1.21.0
+pandas>=1.3.0
+matplotlib>=3.5.0
+scipy>=1.7.0
+
+# Optional: Quantum computing
+pennylane>=0.32.0
+qiskit>=0.45.0
+
+# Optional: Structure visualization
+biopython>=1.79
+
+# Development
+pytest>=7.0.0

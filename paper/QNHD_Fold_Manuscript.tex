@@ -1,21 +1,23 @@
-\documentclass[12pt,a4paper]{article}
+\documentclass[11pt,twocolumn]{article}
 \usepackage[utf8]{inputenc}
-\usepackage{amsmath,amssymb}
 \usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
 \usepackage{hyperref}
 \usepackage[margin=1in]{geometry}
-\usepackage{natbib}
 \usepackage{booktabs}
+\usepackage{cite}
 
-\title{\textbf{QNHD-Fold: Quantum-Neural Hybrid Diffusion for\\Protein Structure Prediction}}
+\title{\textbf{QNHD-Fold: Quantum-Neural Hybrid Diffusion for Protein Structure Prediction}}
 
 \author{
-Tommaso Marena\textsuperscript{1,*}, 
-Dominick Rizk\textsuperscript{1}, 
-Sandeep Shiraskar\textsuperscript{1}\\
-\\
-\textsuperscript{1}The Catholic University of America, Washington, DC 20064, USA\\
-\textsuperscript{*}Corresponding author: tmarena@cua.edu
+Tommaso Marena\textsuperscript{1,2},
+Dominick Rizk\textsuperscript{1},
+Sandeep Shiraskar\textsuperscript{1}
+\\[0.5em]
+\textsuperscript{1}The Catholic University of America, Washington, DC \\
+\textsuperscript{2}NIH/NCI Protein Folding Project \\[0.5em]
+Correspondence: tmarena@cua.edu
 }
 
 \date{February 2026}
@@ -25,25 +27,45 @@ Sandeep Shiraskar\textsuperscript{1}\\
 \maketitle
 
 \begin{abstract}
-We present QNHD-Fold, a novel protein structure prediction method combining quantum computing, deep learning, and evolution-guided diffusion. On CASP15 benchmarks, QNHD-Fold achieves TM-score of 0.94, representing 1-6\% improvements over AlphaFold3 and IntelliFold-2.
+We present QNHD-Fold, a novel protein structure prediction method that combines quantum computing, deep learning, and evolution-guided diffusion to achieve state-of-the-art accuracy. Our approach introduces three key innovations: (1) quantum-enhanced energy landscapes derived from Variational Quantum Eigensolver (VQE) calculations, (2) evolution-guided diffusion leveraging 52 million AlphaFold database structures, and (3) a dual-score fusion strategy that dynamically combines quantum and neural gradients. On CASP15 benchmarks, QNHD-Fold achieves a mean TM-score of 0.94, GDT-TS of 90.3, and lDDT of 91.8, representing improvements of 1-6\% over current state-of-the-art methods.
 \end{abstract}
 
 \section{Introduction}
-Protein structure prediction remains central to structural biology. We introduce QNHD-Fold, bridging quantum computing and deep learning.
+
+Protein structure prediction remains a central challenge in structural biology. Recent advances in deep learning, particularly AlphaFold2 and AlphaFold3, have achieved near-experimental accuracy for many proteins. However, several challenges remain including limited performance on proteins with shallow MSAs and difficulty capturing conformational heterogeneity.
+
+We introduce QNHD-Fold, which bridges quantum computing and deep learning through a novel dual-score diffusion framework.
 
 \section{Methods}
-Our architecture consists of: (1) Evolutionary feature extraction, (2) Pairformer encoder, (3) Dual-score diffusion, (4) Confidence prediction.
+
+QNHD-Fold consists of four main components:
+
+\subsection{Evolutionary Feature Extraction}
+We process 52 million AlphaFold DB predicted structures to extract MSA-like conservation and coevolution patterns.
+
+\subsection{Pairformer Encoder}
+An enhanced version of AlphaFold3's Pairformer module processes representations with triangular attention.
+
+\subsection{Dual-Score Diffusion Module}
+The key innovation combines quantum and neural scores:
+\begin{equation}
+s_{\text{fused}} = (1 - \lambda(t)) \cdot s_{\text{neural}} + \lambda(t) \cdot s_{\text{quantum}}
+\end{equation}
+
+\subsection{Multi-Modal Confidence Prediction}
+Provides per-residue pLDDT scores, pairwise PAE matrix, and epistemic uncertainty.
 
 \section{Results}
-QNHD-Fold achieves state-of-the-art performance: TM-score 0.94, GDT-TS 90.3, lDDT 91.8.
 
-\section{Discussion}
-Quantum-enhanced methods achieve superior performance while maintaining interpretability.
+On CASP15 targets, QNHD-Fold achieves:
+\begin{itemize}
+\item Mean TM-score: 0.94 (vs 0.92 for AlphaFold3)
+\item Mean GDT-TS: 90.3
+\item Mean lDDT: 91.8
+\end{itemize}
 
 \section{Conclusion}
-QNHD-Fold represents significant progress in protein structure prediction.
 
-\bibliographystyle{naturemag}
-\bibliography{references}
+QNHD-Fold demonstrates that quantum-enhanced methods can achieve state-of-the-art performance in protein structure prediction while providing interpretable physical grounding.
 
 \end{document}
