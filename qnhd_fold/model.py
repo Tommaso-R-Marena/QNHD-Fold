@@ -51,7 +51,9 @@ class QNHDFold:
 
     def _log(self, message: str, verbose: bool) -> None:
         if verbose:
-            ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            from datetime import timezone
+
+            ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             print(f"[{ts}] {message}")
 
     def _validate_sequence(self, sequence: str) -> None:
@@ -74,10 +76,20 @@ class QNHDFold:
 
         pair_repr = self.encoder.encode(sequence)
 
-        def neural_score_fn(xt, t: int):
-            pair_mean = pair_repr.mean(axis=-1)
-            pair_grad = pair_mean[:, :, None] - pair_mean.mean()
-            return -0.1 * xt + 0.01 * pair_grad
+        def neural_score_fn_factory(start: int, end: int):
+            # Pre-slice the pair representation for the current block
+            block_pair_repr = pair_repr[start:end, start:end]
+
+            def neural_score_fn(xt, t: int):
+                # block_pair_repr shape: (B, B, D)
+                # pair_mean shape: (B, B)
+                pair_mean = block_pair_repr.mean(axis=-1)
+                # pair_grad shape: (B, B, 1)
+                pair_grad = pair_mean[:, :, None] - pair_mean.mean()
+                # xt shape: (B, B, 3)
+                return -0.1 * xt + 0.01 * pair_grad
+
+            return neural_score_fn
 
         def quantum_score_fn(xt, t: int):
             return -self.quantum.quantum_energy_gradient(xt)
@@ -87,6 +99,7 @@ class QNHDFold:
         for start in range(0, n, batch_size):
             end = min(n, start + batch_size)
             shape = (end - start, end - start, 3)
+            neural_score_fn = neural_score_fn_factory(start, end)
             block = self.diffusion.sample(shape, neural_score_fn, quantum_score_fn, num_steps=num_diffusion_steps)
             if TORCH_AVAILABLE and isinstance(block, torch.Tensor):
                 block = block.detach().cpu().numpy()
