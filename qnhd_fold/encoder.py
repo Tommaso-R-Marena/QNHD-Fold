@@ -33,7 +33,18 @@ class EncoderConfig:
 if TORCH_AVAILABLE:
 
     class PairformerEncoder(nn.Module):
+        """
+        PyTorch implementation of the Pairformer encoder.
+        Encodes protein sequences into high-dimensional pair representations.
+        """
+
         def __init__(self, config: Optional[EncoderConfig] = None):
+            """
+            Initialize the encoder.
+
+            Args:
+                config: Configuration for the encoder dimensions and layers.
+            """
             super().__init__()
             self.config = config or EncoderConfig()
             self.embedding = nn.Embedding(len(AA), self.config.pair_dim)
@@ -42,7 +53,18 @@ if TORCH_AVAILABLE:
             )
             self.norm = nn.LayerNorm(self.config.pair_dim)
 
-        def encode(self, sequence: str, msa: Optional[torch.Tensor] = None, device: Optional[torch.device] = None):
+        def encode(self, sequence: str, msa: Optional[torch.Tensor] = None, device: Optional[torch.device] = None) -> torch.Tensor:
+            """
+            Encode a protein sequence into a pair representation.
+
+            Args:
+                sequence: Amino acid sequence.
+                msa: Optional Multiple Sequence Alignment features.
+                device: Device to run the encoding on.
+
+            Returns:
+                Pair representation tensor of shape [N, N, pair_dim].
+            """
             if not sequence:
                 raise ValueError("Sequence must be non-empty.")
             d = device or next(self.parameters()).device
@@ -58,12 +80,25 @@ if TORCH_AVAILABLE:
 else:
 
     class PairformerEncoder:
+        """
+        NumPy-based fallback implementation of the Pairformer encoder.
+        Used when PyTorch is not available.
+        """
+
         def __init__(self, config: Optional[EncoderConfig] = None, seed: int = 7):
+            """
+            Initialize the encoder.
+
+            Args:
+                config: Configuration for the encoder.
+                seed: Random seed for initialization.
+            """
             self.config = config or EncoderConfig()
             rng = np.random.default_rng(seed)
             self.proj = rng.normal(0.0, 0.05, size=(20, self.config.pair_dim)).astype(np.float32)
 
         def _sequence_features(self, sequence: str) -> np.ndarray:
+            """Compute sequence features from amino acid IDs."""
             ids = np.array([AA_TO_ID.get(aa, 0) for aa in sequence], dtype=np.int64)
             onehot = np.eye(20, dtype=np.float32)[ids]
             return onehot @ self.proj
@@ -77,7 +112,17 @@ else:
             cov = cov / (np.std(cov) + 1e-6)
             return cov[..., None].astype(np.float32)
 
-        def encode(self, sequence: str, msa: Optional[np.ndarray] = None):
+        def encode(self, sequence: str, msa: Optional[np.ndarray] = None) -> np.ndarray:
+            """
+            Encode a protein sequence into a pair representation using NumPy.
+
+            Args:
+                sequence: Amino acid sequence.
+                msa: Optional Multiple Sequence Alignment features.
+
+            Returns:
+                Pair representation array of shape [N, N, pair_dim].
+            """
             if not sequence:
                 raise ValueError("Sequence must be non-empty.")
             n = len(sequence)

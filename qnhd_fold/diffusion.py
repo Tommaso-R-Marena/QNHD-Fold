@@ -76,6 +76,10 @@ class DualScoreDiffusion(nn.Module if TORCH_AVAILABLE else object):
         neural_score = neural_score_fn(xt, t)
         quantum_score = quantum_score_fn(xt, t)
         score = self.fuse_scores(neural_score, quantum_score, t)
+
+        if TORCH_AVAILABLE and isinstance(xt, torch.Tensor):
+            score = torch.as_tensor(score, device=xt.device, dtype=xt.dtype)
+
         beta_t, alpha_t, alpha_bar_t = self.betas[t], self.alphas[t], self.alpha_bars[t]
         sqrt = torch.sqrt if TORCH_AVAILABLE and isinstance(xt, torch.Tensor) else np.sqrt
         randn = (lambda x: torch.randn_like(x)) if TORCH_AVAILABLE and isinstance(xt, torch.Tensor) else (lambda x: np.random.normal(size=x.shape).astype(np.float32))
