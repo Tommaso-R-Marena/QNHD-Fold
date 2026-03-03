@@ -42,7 +42,7 @@ class ConfidenceHead:
         local_compactness = np.exp(-distances.mean(axis=1) / 10.0)
         pair_signal = np.tanh(np.abs(pair_repr).mean(axis=(1, 2)))
 
-        raw = 0.6 * local_compactness + 0.4 * pair_signal
+        raw = 0.5 * local_compactness + 0.5 * pair_signal
         plddt = np.clip(100 * raw, 0, 100).astype(np.float32)
         pae = np.clip(distances / 2.0, 0, 31.0).astype(np.float32)
 
