@@ -38,8 +38,11 @@ class ConfidenceHead:
         pair_repr = self._to_numpy(pair_repr)
         if coordinates.ndim != 2 or coordinates.shape[1] != 3:
             raise ValueError("Coordinates must have shape [N,3].")
+        n = coordinates.shape[0]
         distances = np.linalg.norm(coordinates[:, None, :] - coordinates[None, :, :], axis=-1)
         local_compactness = np.exp(-distances.mean(axis=1) / 10.0)
+        # pair_repr shape is (N, N, D), we need signal per residue (N,)
+        # axis=(1, 2) results in shape (N,)
         pair_signal = np.tanh(np.abs(pair_repr).mean(axis=(1, 2)))
 
         raw = 0.5 * local_compactness + 0.5 * pair_signal
