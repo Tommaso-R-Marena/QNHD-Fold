@@ -31,16 +31,21 @@ class StructurePrediction:
 
     def save(self, path: str) -> None:
         out = Path(path)
+        plddt = self.confidence.plddt
         with out.open("w", encoding="utf-8") as handle:
-            for i, (aa, xyz) in enumerate(zip(self.sequence, self.coordinates), start=1):
+            for i, (aa, xyz, conf) in enumerate(zip(self.sequence, self.coordinates, plddt), start=1):
                 x, y, z = xyz.tolist()
                 handle.write(
                     f"ATOM  {i:5d}  CA  {aa:>3s} A{i:4d}    "
-                    f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00 50.00           C\n"
+                    f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00{conf:6.2f}           C\n"
                 )
 
 
 class QNHDFold:
+    """
+    Main QNHD-Fold model for protein structure prediction.
+    """
+
     def __init__(self, config: Optional[DiffusionConfig] = None, device: Optional[str] = None):
         self.config = config or DiffusionConfig()
         self.device = device or ("cuda" if TORCH_AVAILABLE and torch.cuda.is_available() else "cpu")
@@ -78,16 +83,25 @@ class QNHDFold:
 
         def neural_score_fn_factory(start: int, end: int):
             # Pre-slice the pair representation for the current block
-            block_pair_repr = pair_repr[start:end, start:end]
+            if TORCH_AVAILABLE and isinstance(pair_repr, torch.Tensor):
+                block_pair_repr = pair_repr[start:end, start:end]
+                pair_mean = block_pair_repr.mean(dim=-1)
+            else:
+                block_pair_repr = pair_repr[start:end, start:end]
+                pair_mean = block_pair_repr.mean(axis=-1)
 
             def neural_score_fn(xt, t: int):
-                # block_pair_repr shape: (B, B, D)
+                # xt shape: (B, 3)
                 # pair_mean shape: (B, B)
-                pair_mean = block_pair_repr.mean(axis=-1)
-                # pair_grad shape: (B, B, 1)
-                pair_grad = pair_mean[:, :, None] - pair_mean.mean()
-                # xt shape: (B, B, 3)
-                return -0.1 * xt + 0.01 * pair_grad
+                if TORCH_AVAILABLE and isinstance(xt, torch.Tensor):
+                    # Force_{i} = sum_j w_{ij} * (x_j - x_i)
+                    diffs = xt[None, :, :] - xt[:, None, :]  # (B, B, 3)
+                    score = (pair_mean[:, :, None] * diffs).sum(dim=1)
+                    return score
+
+                diffs = xt[None, :, :] - xt[:, None, :]
+                score = (pair_mean[:, :, None] * diffs).sum(axis=1)
+                return score
 
             return neural_score_fn
 
@@ -98,12 +112,12 @@ class QNHDFold:
         coords = np.zeros((n, 3), dtype=np.float32)
         for start in range(0, n, batch_size):
             end = min(n, start + batch_size)
-            shape = (end - start, end - start, 3)
+            shape = (end - start, 3)
             neural_score_fn = neural_score_fn_factory(start, end)
             block = self.diffusion.sample(shape, neural_score_fn, quantum_score_fn, num_steps=num_diffusion_steps)
             if TORCH_AVAILABLE and isinstance(block, torch.Tensor):
                 block = block.detach().cpu().numpy()
-            coords[start:end] = block.mean(axis=1)
+            coords[start:end] = block
 
         self._log("Computing confidence outputs", verbose)
         conf = self.confidence.predict(coords, pair_repr)
