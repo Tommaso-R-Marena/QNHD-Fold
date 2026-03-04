@@ -19,7 +19,7 @@ except Exception:  # pragma: no cover
 
 from .confidence import ConfidenceHead, ConfidenceOutputs
 from .diffusion import DiffusionConfig, DualScoreDiffusion
-from .encoder import EncoderConfig, PairformerEncoder
+from .encoder import AA_1_TO_3, EncoderConfig, PairformerEncoder
 from .quantum_circuits import QuantumEnergyModule
 
 
@@ -31,12 +31,15 @@ class StructurePrediction:
 
     def save(self, path: str) -> None:
         out = Path(path)
+        plddt = self.confidence.plddt
         with out.open("w", encoding="utf-8") as handle:
             for i, (aa, xyz) in enumerate(zip(self.sequence, self.coordinates), start=1):
                 x, y, z = xyz.tolist()
+                res_name = AA_1_TO_3.get(aa, "UNK")
+                score = float(plddt[i - 1])
                 handle.write(
-                    f"ATOM  {i:5d}  CA  {aa:>3s} A{i:4d}    "
-                    f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00 50.00           C\n"
+                    f"ATOM  {i:5d}  CA  {res_name:>3s} A{i:4d}    "
+                    f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00{score:6.2f}           C\n"
                 )
 
 
@@ -77,16 +80,18 @@ class QNHDFold:
         pair_repr = self.encoder.encode(sequence)
 
         def neural_score_fn_factory(start: int, end: int):
-            # Pre-slice the pair representation for the current block
+            # Pre-slice and pre-calculate base for neural score
             block_pair_repr = pair_repr[start:end, start:end]
+            pair_mean = block_pair_repr.mean(axis=-1)
+            pair_grad = pair_mean[:, :, None] - pair_mean.mean()
+
+            is_torch = TORCH_AVAILABLE and isinstance(pair_grad, torch.Tensor)
+            if is_torch:
+                pair_grad = pair_grad.to(self.device)
 
             def neural_score_fn(xt, t: int):
-                # block_pair_repr shape: (B, B, D)
-                # pair_mean shape: (B, B)
-                pair_mean = block_pair_repr.mean(axis=-1)
-                # pair_grad shape: (B, B, 1)
-                pair_grad = pair_mean[:, :, None] - pair_mean.mean()
-                # xt shape: (B, B, 3)
+                # xt shape: (B, B, 3) or similar
+                # Enforce a simple restorative force + pair-based guidance
                 return -0.1 * xt + 0.01 * pair_grad
 
             return neural_score_fn

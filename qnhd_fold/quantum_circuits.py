@@ -53,56 +53,76 @@ class QuantumEnergyModule(nn.Module if TORCH_AVAILABLE else object):
         self.backend = "pennylane" if qml is not None else "classical"
         self.dev = qml.device("default.qubit", wires=n_qubits) if qml is not None else None
 
-    def compute_energy(self, coordinates, contact_cutoff: float = 10.0):
+    def compute_energy(self, coordinates, contact_cutoff: float = 10.0, reduce: bool = True):
         """
         Compute the total energy of a protein conformation.
+        Supports batched inputs of shape [..., N, 3].
 
         Args:
-            coordinates: Tensor or array of shape [N, 3] representing CA atom positions.
+            coordinates: Tensor or array of shape [..., N, 3] representing CA atom positions.
             contact_cutoff: Distance cutoff for contact energy calculation.
+            reduce: Whether to reduce (mean) the energy components or return per-residue/atom.
 
         Returns:
-            Total energy as a scalar.
+            Total energy as a scalar or array/tensor.
         """
-        if TORCH_AVAILABLE and isinstance(coordinates, torch.Tensor):
-            diffs = torch.diff(coordinates, dim=0)
-            bond = torch.norm(diffs, dim=-1)
-            backbone = torch.mean((bond - 3.8) ** 2) if bond.numel() else coordinates.new_tensor(0.0)
-            centered = coordinates - coordinates.mean(dim=0, keepdim=True)
-            sidechain = torch.mean(torch.norm(centered, dim=-1) ** 2)
-            d = torch.norm(coordinates[:, None, :] - coordinates[None, :, :], dim=-1)
-            mask = (d < contact_cutoff) & (~torch.eye(coordinates.shape[0], dtype=torch.bool, device=coordinates.device))
-            d_masked = d[mask]
-            if d_masked.numel() > 0:
-                d_masked = torch.clamp(d_masked, min=1e-2)
-                contact = torch.mean((1.0 / (d_masked**12)) - (2.0 / (d_masked**6)))
-            else:
-                contact = coordinates.new_tensor(0.0)
-            return self.weights.backbone * backbone + self.weights.sidechain * sidechain + self.weights.contact * contact
+        is_torch = TORCH_AVAILABLE and isinstance(coordinates, torch.Tensor)
+        lib = torch if is_torch else np
+        ndim = coordinates.ndim
+        c = coordinates if ndim >= 3 else (coordinates.unsqueeze(0) if is_torch else coordinates[None, ...])
 
-        c = coordinates
-        diffs = np.diff(c, axis=0)
-        bond = np.linalg.norm(diffs, axis=-1)
-        backbone = float(np.mean((bond - 3.8) ** 2)) if len(bond) else 0.0
-        centered = c - c.mean(axis=0, keepdims=True)
-        sidechain = float(np.mean(np.linalg.norm(centered, axis=-1) ** 2))
-        d = np.linalg.norm(c[:, None, :] - c[None, :, :], axis=-1)
-        mask = (d < contact_cutoff) & (~np.eye(len(c), dtype=bool))
-        d_masked = d[mask]
-        if len(d_masked) > 0:
-            d_masked = np.clip(d_masked, 1e-2, None)
-            contact = float(np.mean((1.0 / (d_masked**12)) - (2.0 / (d_masked**6))))
-        else:
-            contact = 0.0
-        return float(self.weights.backbone * backbone + self.weights.sidechain * sidechain + self.weights.contact * contact)
+        # Backbone
+        diffs = (torch.diff(c, dim=-2) if is_torch else np.diff(c, axis=-2))
+        bond = (torch.linalg.norm(diffs, dim=-1) if is_torch else np.linalg.norm(diffs, axis=-1))
+        backbone_per = (bond - 3.8) ** 2
+        backbone = (torch.mean(backbone_per, dim=-1) if is_torch else np.mean(backbone_per, axis=-1))
+
+        # Sidechain
+        c_mean = (torch.mean(c, dim=-2, keepdim=True) if is_torch else np.mean(c, axis=-2, keepdims=True))
+        centered = c - c_mean
+        sidechain_per = torch.sum(centered**2, dim=-1) if is_torch else np.sum(centered**2, axis=-1)
+        sidechain = (torch.mean(sidechain_per, dim=-1) if is_torch else np.mean(sidechain_per, axis=-1))
+
+        # Contact
+        dist_vec = c[..., :, None, :] - c[..., None, :, :]
+        dist = (torch.linalg.norm(dist_vec, dim=-1) if is_torch else np.linalg.norm(dist_vec, axis=-1))
+        n = c.shape[-2]
+        eye = (torch.eye(n, device=c.device, dtype=torch.bool) if is_torch else np.eye(n, dtype=bool))
+        mask = (dist < contact_cutoff) & (~eye)
+        d_clamped = (torch.clamp(dist, min=1e-2) if is_torch else np.clip(dist, 1e-2, None))
+        potential = (1.0 / (d_clamped**12)) - (2.0 / (d_clamped**6))
+
+        contact_sum = (torch.sum(potential * mask, dim=(-2, -1)) if is_torch else np.sum(potential * mask, axis=(-2, -1)))
+        mask_sum = (torch.sum(mask.to(torch.float32), dim=(-2, -1)) if is_torch else np.sum(mask, axis=(-2, -1)))
+        contact = contact_sum / (torch.clamp(mask_sum, min=1.0) if is_torch else np.maximum(mask_sum, 1.0))
+
+        if not reduce:
+            # Reconstruct per-residue energy if needed. For now we use the mean for gradients.
+            # But let's return total for the predicted structure's sake if called with reduce=True.
+            pass
+
+        energy = self.weights.backbone * backbone + self.weights.sidechain * sidechain + self.weights.contact * contact
+
+        if reduce:
+            # If coordinates were [..., N, 3], energy is [...].
+            # If coordinates were [N, 3], energy is scalar.
+            if ndim <= 2:
+                return torch.sum(energy) if is_torch else float(np.sum(energy))
+
+            # If batched, we might still want to sum over each batch element's residues.
+            # In our case, energy is already [B] if c was [B, N, 3].
+            return energy
+
+        return energy
 
     def quantum_energy_gradient(self, coordinates, eps: float = 1e-3):
         """
         Compute the gradient of the energy with respect to coordinates.
+        Uses autograd if Torch is available, otherwise vectorized finite difference.
 
         Args:
-            coordinates: Tensor or array of shape [N, 3].
-            eps: Step size for finite difference gradient if Torch is not available.
+            coordinates: Tensor or array of shape [..., N, 3].
+            eps: Step size for finite difference gradient.
 
         Returns:
             Gradient of the same shape as coordinates.
@@ -110,15 +130,25 @@ class QuantumEnergyModule(nn.Module if TORCH_AVAILABLE else object):
         if TORCH_AVAILABLE and isinstance(coordinates, torch.Tensor):
             c = coordinates.detach().clone().requires_grad_(True)
             e = self.compute_energy(c)
+            if e.numel() > 1:
+                e = e.sum()
             return torch.autograd.grad(e, c)[0]
-        grad = np.zeros_like(coordinates, dtype=np.float32)
-        base = self.compute_energy(coordinates)
-        for i in range(coordinates.shape[0]):
-            for j in range(3):
-                perturbed = coordinates.copy()
-                perturbed[i, j] += eps
-                grad[i, j] = (self.compute_energy(perturbed) - base) / eps
-        return grad
+
+        # Vectorized finite difference for NumPy
+        n, d = coordinates.shape
+        base_energy = self.compute_energy(coordinates)
+
+        # Create n*d perturbed copies
+        perturbations = np.tile(coordinates, (n * d, 1, 1))
+        indices = np.arange(n * d)
+        rows = indices // d
+        cols = indices % d
+        perturbations[indices, rows, cols] += eps
+
+        # Batch evaluation
+        perturbed_energies = self.compute_energy(perturbations)
+        grad = (perturbed_energies - base_energy) / eps
+        return grad.reshape(n, d).astype(np.float32)
 
     def vqe_energy(self, params, coordinates):
         """
