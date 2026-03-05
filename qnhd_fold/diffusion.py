@@ -99,7 +99,11 @@ class DualScoreDiffusion(nn.Module if TORCH_AVAILABLE else object):
             score = torch.as_tensor(score, device=xt.device, dtype=xt.dtype)
 
         beta_t, alpha_t, alpha_bar_t = self.betas[t], self.alphas[t], self.alpha_bars[t]
-        alpha_bar_prev = self.alpha_bars[t - 1] if t > 0 else (torch.tensor(1.0, device=xt.device, dtype=xt.dtype) if is_torch else 1.0)
+        alpha_bar_prev = (
+            self.alpha_bars[t - 1]
+            if t > 0
+            else (torch.tensor(1.0, device=xt.device, dtype=xt.dtype) if is_torch else 1.0)
+        )
 
         if is_torch:
             beta_t = torch.as_tensor(beta_t, device=xt.device, dtype=xt.dtype)
@@ -128,7 +132,11 @@ class DualScoreDiffusion(nn.Module if TORCH_AVAILABLE else object):
             mean = (xt - (beta_t / sqrt(1 - alpha_bar_t)) * eps_pred) / sqrt(alpha_t)
             return mean + sqrt(beta_t) * randn(xt)
         elif sampler == "ddim":
-            sigma_t = eta * sqrt((1 - alpha_bar_prev) / (1 - alpha_bar_t)) * sqrt(1 - alpha_bar_t / alpha_bar_prev)
+            sigma_t = (
+                eta
+                * sqrt((1 - alpha_bar_prev) / (1 - alpha_bar_t))
+                * sqrt(1 - alpha_bar_t / alpha_bar_prev)
+            )
             direction_to_xt = sqrt(1 - alpha_bar_prev - sigma_t**2) * eps_pred
             return sqrt(alpha_bar_prev) * x0_pred + direction_to_xt + sigma_t * randn(xt)
 
