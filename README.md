@@ -8,7 +8,7 @@
 
 **Author:** Tommaso Marena  
 **Institution:** The Catholic University of America  
-**Project:** NIH/NCI Protein Folding Research
+**Project:** Quantum Protein Folding Research
 
 ---
 
@@ -284,8 +284,8 @@ GitHub: [@Tommaso-R-Marena](https://github.com/Tommaso-R-Marena)
 ## 🙏 Acknowledgments
 
 - The Catholic University of America
-- NIH/NCI Protein Folding Project
 - Dr. Dominick Rizk
+- Dr. Daniel Sierra-Sosa
 - Sandeep Shiraskar
 
 ---
@@ -304,7 +304,7 @@ GitHub: [@Tommaso-R-Marena](https://github.com/Tommaso-R-Marena)
 
 ---
 
-**Last Updated:** February 2026
+**Last Updated:** March 2026
 
 ## Backend Runtime
 
