@@ -86,8 +86,8 @@ class QuantumEnergyModule(nn.Module if TORCH_AVAILABLE else object):
         # Contact
         dist_vec = c[..., :, None, :] - c[..., None, :, :]
         dist = (torch.linalg.norm(dist_vec, dim=-1) if is_torch else np.linalg.norm(dist_vec, axis=-1))
-        n = c.shape[-2]
-        eye = (torch.eye(n, device=c.device, dtype=torch.bool) if is_torch else np.eye(n, dtype=bool))
+        n_res = c.shape[-2]
+        eye = (torch.eye(n_res, device=c.device, dtype=torch.bool) if is_torch else np.eye(n_res, dtype=bool))
         mask = (dist < contact_cutoff) & (~eye)
         d_clamped = (torch.clamp(dist, min=1e-2) if is_torch else np.clip(dist, 1e-2, None))
         potential = (1.0 / (d_clamped**12)) - (2.0 / (d_clamped**6))
@@ -96,12 +96,29 @@ class QuantumEnergyModule(nn.Module if TORCH_AVAILABLE else object):
         mask_sum = (torch.sum(mask.to(torch.float32), dim=(-2, -1)) if is_torch else np.sum(mask, axis=(-2, -1)))
         contact = contact_sum / (torch.clamp(mask_sum, min=1.0) if is_torch else np.maximum(mask_sum, 1.0))
 
+        # Torsion
+        if n_res >= 3:
+            v1 = diffs[..., :-1, :]
+            v2 = diffs[..., 1:, :]
+            v1_n = (torch.linalg.norm(v1, dim=-1) if is_torch else np.linalg.norm(v1, axis=-1))
+            v2_n = (torch.linalg.norm(v2, dim=-1) if is_torch else np.linalg.norm(v2, axis=-1))
+            dot = (torch.sum(v1 * v2, dim=-1) if is_torch else np.sum(v1 * v2, axis=-1))
+            cos_theta = dot / (v1_n * v2_n + 1e-8)
+            torsion = (torch.mean(cos_theta, dim=-1) if is_torch else np.mean(cos_theta, axis=-1))
+        else:
+            torsion = (torch.zeros(c.shape[:-2], device=c.device) if is_torch else np.zeros(c.shape[:-2]))
+
         if not reduce:
             # Reconstruct per-residue energy if needed. For now we use the mean for gradients.
             # But let's return total for the predicted structure's sake if called with reduce=True.
             pass
 
-        energy = self.weights.backbone * backbone + self.weights.sidechain * sidechain + self.weights.contact * contact
+        energy = (
+            self.weights.backbone * backbone +
+            self.weights.sidechain * sidechain +
+            self.weights.contact * contact +
+            self.weights.torsion * torsion
+        )
 
         if reduce:
             # If coordinates were [..., N, 3], energy is [...].
@@ -135,31 +152,62 @@ class QuantumEnergyModule(nn.Module if TORCH_AVAILABLE else object):
             return torch.autograd.grad(e, c)[0]
 
         # Vectorized finite difference for NumPy
-        n, d = coordinates.shape
-        base_energy = self.compute_energy(coordinates)
+        orig_shape = coordinates.shape
+        c_flat = coordinates.reshape(-1, orig_shape[-2], 3)
+        b, n, d = c_flat.shape
 
-        # Create n*d perturbed copies
-        perturbations = np.tile(coordinates, (n * d, 1, 1))
-        indices = np.arange(n * d)
-        rows = indices // d
-        cols = indices % d
-        perturbations[indices, rows, cols] += eps
+        grads = []
+        for i in range(b):
+            ci = c_flat[i]
+            base_e = self.compute_energy(ci)
 
-        # Batch evaluation
-        perturbed_energies = self.compute_energy(perturbations)
-        grad = (perturbed_energies - base_energy) / eps
-        return grad.reshape(n, d).astype(np.float32)
+            # Create n*d perturbed copies
+            perturbations = np.tile(ci, (n * d, 1, 1))
+            indices = np.arange(n * d)
+            rows = indices // d
+            cols = indices % d
+            perturbations[indices, rows, cols] += eps
+
+            # Batch evaluation
+            perturbed_energies = self.compute_energy(perturbations)
+            gi = (perturbed_energies - base_e) / eps
+            grads.append(gi.reshape(n, d))
+
+        grad = np.stack(grads).reshape(orig_shape)
+        return grad.astype(np.float32)
 
     def vqe_energy(self, params, coordinates):
         """
-        Placeholder for Variational Quantum Eigensolver energy calculation.
+        Compute energy using a Variational Quantum Eigensolver (VQE) circuit.
+        Uses AngleEmbedding for coordinate encoding and BasicEntanglerLayers
+        for the variational part.
         """
         if qml is None:
             base = self.compute_energy(coordinates)
             if TORCH_AVAILABLE and isinstance(params, torch.Tensor):
                 return torch.mean(torch.cos(params)) + 0.1 * base
             return float(np.mean(np.cos(params)) + 0.1 * base)
-        return self.compute_energy(coordinates)
+
+        @qml.qnode(self.dev, interface="torch" if TORCH_AVAILABLE else "autograd")
+        def circuit(p, c):
+            # c: flattened coordinates
+            qml.AngleEmbedding(c[: self.n_qubits], wires=range(self.n_qubits))
+            qml.BasicEntanglerLayers(p, wires=range(self.n_qubits))
+            return qml.expval(qml.PauliZ(0))
+
+        # Reshape or pad coordinates to fit qubits
+        is_torch = TORCH_AVAILABLE and isinstance(coordinates, torch.Tensor)
+        lib = torch if is_torch else np
+        c_flat = coordinates.reshape(-1)
+        if len(c_flat) < self.n_qubits:
+            c_input = lib.concatenate([c_flat, lib.zeros(self.n_qubits - len(c_flat))])
+        else:
+            c_input = c_flat[: self.n_qubits]
+
+        vqe_val = circuit(params, c_input)
+        base_e = self.compute_energy(coordinates)
+
+        return vqe_val + 0.1 * base_e
 
 
 QuantumProteinCircuit = QuantumEnergyModule
