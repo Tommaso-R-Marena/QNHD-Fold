@@ -64,25 +64,35 @@ class DualScoreDiffusion(nn.Module if TORCH_AVAILABLE else object):
         return (1 - lam) * neural_score + lam * quantum_score
 
     def forward_diffuse(self, x0, t: int, noise=None):
+        a = self.alpha_bars[t]
         if TORCH_AVAILABLE and isinstance(x0, torch.Tensor):
             noise = noise if noise is not None else torch.randn_like(x0)
-            a = self.alpha_bars[t]
             return torch.sqrt(a) * x0 + torch.sqrt(1 - a) * noise
+
         noise = noise if noise is not None else np.random.normal(size=x0.shape).astype(np.float32)
-        a = self.alpha_bars[t]
-        return np.sqrt(a) * x0 + np.sqrt(1 - a) * noise
+        a_val = float(a)
+        # Use np.asarray to ensure result is a standard numpy array and avoid __array_wrap__ warnings in NumPy 2.0
+        return np.asarray(np.sqrt(a_val) * x0 + np.sqrt(1 - a_val) * noise, dtype=np.float32)
 
     def reverse_step(self, xt, t: int, neural_score_fn: Callable, quantum_score_fn: Callable, sampler: Sampler = "ddpm", eta: float = 0.0):
         neural_score = neural_score_fn(xt, t)
         quantum_score = quantum_score_fn(xt, t)
         score = self.fuse_scores(neural_score, quantum_score, t)
 
-        if TORCH_AVAILABLE and isinstance(xt, torch.Tensor):
+        is_torch = TORCH_AVAILABLE and isinstance(xt, torch.Tensor)
+        if is_torch:
             score = torch.as_tensor(score, device=xt.device, dtype=xt.dtype)
 
         beta_t, alpha_t, alpha_bar_t = self.betas[t], self.alphas[t], self.alpha_bars[t]
-        sqrt = torch.sqrt if TORCH_AVAILABLE and isinstance(xt, torch.Tensor) else np.sqrt
-        randn = (lambda x: torch.randn_like(x)) if TORCH_AVAILABLE and isinstance(xt, torch.Tensor) else (lambda x: np.random.normal(size=x.shape).astype(np.float32))
+        if is_torch:
+            beta_t = torch.as_tensor(beta_t, device=xt.device, dtype=xt.dtype)
+            alpha_t = torch.as_tensor(alpha_t, device=xt.device, dtype=xt.dtype)
+            alpha_bar_t = torch.as_tensor(alpha_bar_t, device=xt.device, dtype=xt.dtype)
+        else:
+            beta_t, alpha_t, alpha_bar_t = float(beta_t), float(alpha_t), float(alpha_bar_t)
+
+        sqrt = torch.sqrt if is_torch else np.sqrt
+        randn = (lambda x: torch.randn_like(x)) if is_torch else (lambda x: np.random.normal(size=x.shape).astype(np.float32))
         eps = -score * sqrt(1 - alpha_bar_t)
         mean = (xt - (beta_t / sqrt(1 - alpha_bar_t)) * eps) / sqrt(alpha_t)
         if t == 0:

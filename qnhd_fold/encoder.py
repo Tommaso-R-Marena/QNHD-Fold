@@ -19,6 +19,12 @@ except Exception:  # pragma: no cover
 
 AA = "ACDEFGHIKLMNPQRSTVWY"
 AA_TO_ID = {a: i for i, a in enumerate(AA)}
+AA_1_TO_3 = {
+    "A": "ALA", "C": "CYS", "D": "ASP", "E": "GLU", "F": "PHE",
+    "G": "GLY", "H": "HIS", "I": "ILE", "K": "LYS", "L": "LEU",
+    "M": "MET", "N": "ASN", "P": "PRO", "Q": "GLN", "R": "ARG",
+    "S": "SER", "T": "THR", "V": "VAL", "W": "TRP", "Y": "TYR"
+}
 
 
 @dataclass
