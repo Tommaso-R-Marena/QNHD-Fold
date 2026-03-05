@@ -96,12 +96,30 @@ class QuantumEnergyModule(nn.Module if TORCH_AVAILABLE else object):
         mask_sum = (torch.sum(mask.to(torch.float32), dim=(-2, -1)) if is_torch else np.sum(mask, axis=(-2, -1)))
         contact = contact_sum / (torch.clamp(mask_sum, min=1.0) if is_torch else np.maximum(mask_sum, 1.0))
 
+        # Torsion
+        if n >= 3:
+            v1 = diffs[..., :-1, :]
+            v2 = diffs[..., 1:, :]
+            v1_norm = torch.linalg.norm(v1, dim=-1, keepdim=True) if is_torch else np.linalg.norm(v1, axis=-1, keepdims=True)
+            v2_norm = torch.linalg.norm(v2, dim=-1, keepdim=True) if is_torch else np.linalg.norm(v2, axis=-1, keepdims=True)
+            v1_n = v1 / (v1_norm + 1e-8)
+            v2_n = v2 / (v2_norm + 1e-8)
+            cos_theta = torch.sum(v1_n * v2_n, dim=-1) if is_torch else np.sum(v1_n * v2_n, axis=-1)
+            torsion = torch.mean(cos_theta**2, dim=-1) if is_torch else np.mean(cos_theta**2, axis=-1)
+        else:
+            torsion = torch.tensor(0.0, device=c.device) if is_torch else 0.0
+
         if not reduce:
             # Reconstruct per-residue energy if needed. For now we use the mean for gradients.
             # But let's return total for the predicted structure's sake if called with reduce=True.
             pass
 
-        energy = self.weights.backbone * backbone + self.weights.sidechain * sidechain + self.weights.contact * contact
+        energy = (
+            self.weights.backbone * backbone
+            + self.weights.sidechain * sidechain
+            + self.weights.contact * contact
+            + self.weights.torsion * torsion
+        )
 
         if reduce:
             # If coordinates were [..., N, 3], energy is [...].
@@ -128,7 +146,11 @@ class QuantumEnergyModule(nn.Module if TORCH_AVAILABLE else object):
             Gradient of the same shape as coordinates.
         """
         if TORCH_AVAILABLE and isinstance(coordinates, torch.Tensor):
-            c = coordinates.detach().clone().requires_grad_(True)
+            c = (
+                coordinates.detach().clone().requires_grad_(True)
+                if not coordinates.requires_grad
+                else coordinates
+            )
             e = self.compute_energy(c)
             if e.numel() > 1:
                 e = e.sum()
@@ -138,28 +160,39 @@ class QuantumEnergyModule(nn.Module if TORCH_AVAILABLE else object):
         n, d = coordinates.shape
         base_energy = self.compute_energy(coordinates)
 
-        # Create n*d perturbed copies
+        # Create n*d perturbed copies: (N*D, N, D)
         perturbations = np.tile(coordinates, (n * d, 1, 1))
         indices = np.arange(n * d)
         rows = indices // d
         cols = indices % d
         perturbations[indices, rows, cols] += eps
 
-        # Batch evaluation
+        # Batch evaluation: compute_energy handles [B, N, D]
         perturbed_energies = self.compute_energy(perturbations)
         grad = (perturbed_energies - base_energy) / eps
         return grad.reshape(n, d).astype(np.float32)
 
     def vqe_energy(self, params, coordinates):
         """
-        Placeholder for Variational Quantum Eigensolver energy calculation.
+        Variational Quantum Eigensolver energy calculation using PennyLane.
         """
         if qml is None:
             base = self.compute_energy(coordinates)
             if TORCH_AVAILABLE and isinstance(params, torch.Tensor):
                 return torch.mean(torch.cos(params)) + 0.1 * base
             return float(np.mean(np.cos(params)) + 0.1 * base)
-        return self.compute_energy(coordinates)
+
+        n_qubits = self.n_qubits
+
+        @qml.qnode(self.dev, interface="torch" if TORCH_AVAILABLE else "numpy")
+        def circuit(phi, x):
+            qml.AngleEmbedding(x.flatten()[:n_qubits], wires=range(n_qubits))
+            qml.BasicEntanglerLayers(phi, wires=range(n_qubits))
+            return qml.expval(qml.PauliZ(0))
+
+        # Simple wrapper to handle batching or single input
+        x = torch.as_tensor(coordinates) if TORCH_AVAILABLE else np.asarray(coordinates)
+        return circuit(params, x) + 0.1 * self.compute_energy(coordinates)
 
 
 QuantumProteinCircuit = QuantumEnergyModule
